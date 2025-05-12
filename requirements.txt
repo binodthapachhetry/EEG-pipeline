@@ -1,0 +1,2 @@
+# Runtime dependencies
+mne>=1.0
