@@ -139,20 +139,44 @@ def read_edf_eeg(file_path: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract EEG data from an EDF file.")
     parser.add_argument("edf_file", help="Path to the .edf file")
+    parser.add_argument("output_fif_file", help="Path to save the processed EEG data as a .fif file")
     args = parser.parse_args()
 
     eeg_data, channels, sfreq, positions = read_edf_eeg(args.edf_file)
 
-    if eeg_data is not None:
-        logging.info("Successfully extracted EEG data.")
-        # Example: Print shape or save data if needed
-        # print(f"Data shape: {eeg_data.shape}")
-        # print(f"Channels: {channels}")
-        # print(f"Sampling Frequency: {sfreq} Hz")
-        if positions:
-            logging.info(f"Channel positions: {positions}")
-        # else:
-        #     logging.info("Channel positions could not be determined.")
+    if eeg_data is not None and channels is not None and sfreq is not None:
+        logging.info("Successfully extracted EEG data. Preparing to save to .fif file.")
+
+        # Create MNE Info object
+        # Assuming all returned channels are to be treated as 'eeg' type for saving.
+        # This includes actual EEG scalp channels and any reference channels (e.g., M1, M2)
+        # that were intentionally kept.
+        ch_types = ['eeg'] * len(channels)
+        info = mne.create_info(ch_names=channels, sfreq=sfreq, ch_types=ch_types)
+        logging.debug(f"Created MNE Info object for {len(channels)} channels with sfreq {sfreq} Hz.")
+
+        # Create RawArray object
+        raw_to_save = mne.io.RawArray(eeg_data, info)
+
+        # Set montage if positions are available
+        if positions and isinstance(positions, dict) and any(positions.values()):
+            # Filter positions to only include channels present in the final `channels` list
+            valid_positions = {ch: pos for ch, pos in positions.items() if ch in channels and not np.all(np.isnan(pos))}
+            if valid_positions:
+                try:
+                    montage = mne.channels.make_dig_montage(ch_pos=valid_positions, coord_frame='head')
+                    raw_to_save.set_montage(montage)
+                    logging.info(f"Applied montage with {len(valid_positions)} channel positions to RawArray.")
+                except Exception as e_montage_set:
+                    logging.warning(f"Could not create or set montage from positions: {e_montage_set}. Positions: {valid_positions}")
+            else:
+                logging.info("No valid (non-NaN) channel positions found for the selected channels. Saving without explicit montage.")
+        else:
+            logging.info("No channel positions available or positions dictionary is empty/all NaN. Saving without explicit montage.")
+
+        # Save to .fif file
+        raw_to_save.save(args.output_fif_file, overwrite=True)
+        logging.info(f"Processed EEG data saved to: {args.output_fif_file}")
     else:
-        logging.error("Failed to extract EEG data.")
+        logging.error("Failed to extract EEG data. Nothing to save.")
         sys.exit(1)
