@@ -34,8 +34,35 @@ def read_edf_eeg(file_path: str):
         raw_eeg = raw.copy().pick_types(eeg=True, meg=False, stim=False, eog=False, ecg=False, emg=False)
 
         if not raw_eeg.ch_names:
-            logging.warning("No EEG channels found in the file.")
+            logging.warning("No EEG channels found in the file by MNE's initial pick_types(eeg=True).")
             return None, None, None, None
+
+        # Filter out channels starting with 'cs_' (case-insensitive) as they are often non-data or status channels.
+        initial_ch_names = list(raw_eeg.ch_names) # Get a mutable list of current channel names
+        channels_to_keep = [ch_name for ch_name in initial_ch_names if not ch_name.lower().startswith('cs_')]
+
+        if not channels_to_keep:
+            logging.warning(
+                f"All initially identified EEG channels ({initial_ch_names}) were 'cs_' prefixed. "
+                f"No primary EEG data channels remain after filtering."
+            )
+            return None, None, None, None
+
+        # If the list of channels to keep is different from the initial list, then apply the pick.
+        if len(channels_to_keep) < len(initial_ch_names):
+            channels_dropped = [ch for ch in initial_ch_names if ch not in channels_to_keep]
+            logging.info(
+                f"Initial EEG channels ({len(initial_ch_names)}): {initial_ch_names}. "
+                f"Filtered out 'cs_' prefixed channels: {channels_dropped}. "
+                f"Retaining ({len(channels_to_keep)}): {channels_to_keep}."
+            )
+            raw_eeg.pick_channels(channels_to_keep) # Modifies raw_eeg in-place
+        else:
+            logging.info(
+                f"All {len(initial_ch_names)} initially identified EEG channels retained "
+                f"(no 'cs_' prefixed channels found to filter): {initial_ch_names}."
+            )
+        # Now raw_eeg contains only the filtered channels. raw_eeg.ch_names is updated.
 
         eeg_data = raw_eeg.get_data()
         eeg_channels = raw_eeg.ch_names
