@@ -5,8 +5,13 @@ import argparse
 import mne
 import logging
 import sys
+import numpy as np # For np.union1d
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Common patterns for reference channel names (case-insensitive)
+COMMON_REF_PATTERNS = ['M1', 'M2', 'A1', 'A2', 'TP9', 'TP10', 'REF', 'MASTOID', 'EAR']
+
 
 def read_edf_eeg(file_path: str):
     """
@@ -14,6 +19,8 @@ def read_edf_eeg(file_path: str):
 
     Args:
         file_path (str): The path to the EDF file.
+                       The function attempts to include common reference channels (e.g., M1, M2, A1, A2, TP9, TP10)
+                       if found, alongside channels typed as 'EEG' in the EDF.
 
     Returns:
         tuple: A tuple containing:
@@ -29,16 +36,34 @@ def read_edf_eeg(file_path: str):
         # Exclude non-data channels like annotations
         raw = mne.io.read_raw_edf(file_path, preload=True, exclude=['Status', 'Annotations'])
 
-        # Pick only EEG channels. MNE attempts automatic detection based on names.
-        # If specific channel names are known, use raw.pick_channels(['EEG Fpz-Cz', ...])
-        raw_eeg = raw.copy().pick_types(eeg=True, meg=False, stim=False, eog=False, ecg=False, emg=False)
+        # --- Enhanced Channel Selection ---
+        # 1. Get indices of channels typed as 'EEG'
+        eeg_indices = mne.pick_types(raw.info, eeg=True, meg=False, stim=False, eog=False, ecg=False, emg=False, exclude=[])
+        
+        # 2. Get indices of common reference channels by name pattern
+        ref_indices = []
+        raw_ch_names_lower = [ch.lower() for ch in raw.ch_names]
+        for i, ch_name_lower in enumerate(raw_ch_names_lower):
+            if any(pattern.lower() in ch_name_lower for pattern in COMMON_REF_PATTERNS):
+                ref_indices.append(i)
+        
+        # Combine EEG and reference channel indices, ensuring uniqueness
+        combined_indices = np.union1d(eeg_indices, ref_indices).astype(int)
 
-        if not raw_eeg.ch_names:
-            logging.warning("No EEG channels found in the file by MNE's initial pick_types(eeg=True).")
+        if combined_indices.size == 0:
+            logging.warning("No EEG channels (based on type or common reference names) found in the file.")
             return None, None, None, None
 
+        selected_ch_names = [raw.ch_names[i] for i in combined_indices]
+        logging.info(f"Channels initially selected (EEG type or common ref name): {selected_ch_names}")
+
+        # Create a new raw object with the selected channels
+        raw_selected = raw.copy().pick(picks=selected_ch_names)
+        # --- End of Enhanced Channel Selection ---
+
         # Filter out channels starting with 'cs_' (case-insensitive) as they are often non-data or status channels.
-        initial_ch_names = list(raw_eeg.ch_names) # Get a mutable list of current channel names
+        # This filter is applied AFTER the initial selection of EEG and reference channels.
+        initial_ch_names = list(raw_selected.ch_names) # Get a mutable list of current channel names
         channels_to_keep = [ch_name for ch_name in initial_ch_names if not ch_name.lower().startswith('cs_')]
 
         if not channels_to_keep:
@@ -52,17 +77,17 @@ def read_edf_eeg(file_path: str):
         if len(channels_to_keep) < len(initial_ch_names):
             channels_dropped = [ch for ch in initial_ch_names if ch not in channels_to_keep]
             logging.info(
-                f"Initial EEG channels ({len(initial_ch_names)}): {initial_ch_names}. "
+                f"Channels after initial EEG/ref selection ({len(initial_ch_names)}): {initial_ch_names}. "
                 f"Filtered out 'cs_' prefixed channels: {channels_dropped}. "
                 f"Retaining ({len(channels_to_keep)}): {channels_to_keep}."
             )
-            raw_eeg.pick_channels(channels_to_keep) # Modifies raw_eeg in-place
+            raw_selected.pick_channels(channels_to_keep) # Modifies raw_selected in-place
         else:
             logging.info(
-                f"All {len(initial_ch_names)} initially identified EEG channels retained "
+                f"All {len(initial_ch_names)} channels from EEG/ref selection retained "
                 f"(no 'cs_' prefixed channels found to filter): {initial_ch_names}."
             )
-        # Now raw_eeg contains only the filtered channels. raw_eeg.ch_names is updated.
+        # Now raw_selected contains only the filtered channels. raw_selected.ch_names is updated.
 
         eeg_data = raw_eeg.get_data()
         eeg_channels = raw_eeg.ch_names
@@ -71,13 +96,11 @@ def read_edf_eeg(file_path: str):
 
         # Attempt to set a standard montage and get channel positions
         try:
-            # Use a standard 10-20 montage
             montage = mne.channels.make_standard_montage('standard_1020')
-            raw_eeg.set_montage(montage, on_missing='warn') # Warn if some EEG channels don't match the montage
+            raw_selected.set_montage(montage, on_missing='warn') # Warn if some channels don't match the montage
             logging.info("Applied standard 10-20 montage.")
 
-            # Extract positions for the EEG channels present in raw_eeg
-            current_montage_obj = raw_eeg.get_montage()
+            current_montage_obj = raw_selected.get_montage()
             if current_montage_obj:
                 # get_positions() returns a dict with 'ch_pos', 'coord_frame', etc.
                 # 'ch_pos' is a dict: {ch_name: array([x, y, z])}
