@@ -89,9 +89,13 @@ def read_edf_eeg(file_path: str):
             )
         # Now raw_selected contains only the filtered channels. raw_selected.ch_names is updated.
 
-        eeg_data = raw_eeg.get_data()
-        eeg_channels = raw_eeg.ch_names
-        sfreq = raw_eeg.info['sfreq']
+        if not raw_selected.ch_names: # Double check after cs_ filter
+            logging.warning("No channels remained after 'cs_' prefix filtering.")
+            return None, None, None, None
+
+        eeg_data = raw_selected.get_data()
+        eeg_channels = raw_selected.ch_names
+        sfreq = raw_selected.info['sfreq']
         channel_positions = None
 
         # Attempt to set a standard montage and get channel positions
