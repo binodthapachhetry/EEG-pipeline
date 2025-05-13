@@ -159,7 +159,7 @@ if __name__ == "__main__":
         raw_to_save = mne.io.RawArray(eeg_data, info)
 
         # Set montage if positions are available
-        if positions and isinstance(positions, dict) and any(positions.values()):
+        if positions and isinstance(positions, dict) and positions: # Check if dict is not empty
             # Filter positions to only include channels present in the final `channels` list
             valid_positions = {ch: pos for ch, pos in positions.items() if ch in channels and not np.all(np.isnan(pos))}
             if valid_positions:
