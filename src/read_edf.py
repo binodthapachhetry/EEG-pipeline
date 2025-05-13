@@ -175,8 +175,8 @@ if __name__ == "__main__":
             logging.info("No channel positions available or positions dictionary is empty/all NaN. Saving without explicit montage.")
 
         # Save to .fif file
-        raw_to_save.save(args.output_fif_file, overwrite=True)
-        logging.info(f"Processed EEG data saved to: {args.output_fif_file}")
+        raw_to_save.save(args.output_fif_file, overwrite=True, fmt='single') # Save with float32
+        logging.info(f"Processed EEG data saved to: {args.output_fif_file} with single precision.")
     else:
         logging.error("Failed to extract EEG data. Nothing to save.")
         sys.exit(1)
