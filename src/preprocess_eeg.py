@@ -12,6 +12,56 @@ import numpy as np
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Define standard EEG frequency bands
+BANDS = {
+    "Delta": (0.5, 4.0),
+    "Theta": (4.0, 8.0),
+    "Alpha": (8.0, 12.0),
+    "Sigma": (12.0, 15.0), # Often associated with sleep spindles
+    "Beta": (15.0, 30.0)   # Ensure h_freq of bandpass is >= 30Hz
+}
+TOTAL_POWER_BAND = (BANDS["Delta"][0], BANDS["Beta"][1]) # Min of Delta to Max of Beta
+
+def _extract_spectral_features(data_window: np.ndarray, sfreq: float):
+    """
+    Extracts spectral features (band powers) from a window of EEG data.
+
+    Args:
+        data_window (np.ndarray): The EEG data for the window (channels x samples).
+        sfreq (float): The sampling frequency.
+
+    Returns:
+        dict: A dictionary containing feature names and their values.
+              Features are averaged across channels.
+    """
+    features = {}
+    
+    # Calculate PSD using Welch's method for all channels
+    # n_fft can be sfreq for 1s resolution, or more for finer freq resolution.
+    # Ensure fmax covers the highest band of interest.
+    psds, freqs = mne.time_frequency.psd_array_welch(
+        data_window, sfreq, fmin=TOTAL_POWER_BAND[0], fmax=TOTAL_POWER_BAND[1],
+        n_fft=int(sfreq * 2), # 2-second FFT windows for Welch
+        n_overlap=int(sfreq * 1), # 1-second overlap
+        average='mean', verbose=False
+    ) # psds shape: (n_channels, n_freqs)
+
+    # Calculate absolute power for each band
+    abs_band_powers = {}
+    for band, (fmin, fmax) in BANDS.items():
+        band_mask = (freqs >= fmin) & (freqs < fmax)
+        # Sum power in band, then average across channels
+        abs_band_powers[band] = np.mean(np.sum(psds[:, band_mask], axis=1))
+        features[f"abs_{band.lower()}"] = abs_band_powers[band]
+
+    # Calculate total power and relative powers
+    total_power = np.sum(list(abs_band_powers.values())) # Sum of powers in defined bands
+    if total_power > 0: # Avoid division by zero
+        for band, abs_power in abs_band_powers.items():
+            features[f"rel_{band.lower()}"] = abs_power / total_power
+        features["ratio_alpha_delta"] = abs_band_powers.get("Alpha", 0) / abs_band_powers.get("Delta", 1e-9) # Avoid zero division
+        features["ratio_theta_beta"] = abs_band_powers.get("Theta", 0) / abs_band_powers.get("Beta", 1e-9)
+    return features
 
 def preprocess_eeg_windowed(
     fif_file_path: str,
@@ -33,10 +83,11 @@ def preprocess_eeg_windowed(
         notch_freq (float): Frequency for the notch filter (e.g., 50 or 60 Hz).
 
     Returns:
-        list[tuple[np.ndarray, list[str]]]: A list of tuples. Each tuple contains:
+        list[tuple[np.ndarray, list[str], dict]]: A list of tuples. Each tuple contains:
             - A NumPy array representing a preprocessed window of EEG data.
             - A list of strings, where each string is a sleep stage annotation (e.g., "NREM2", "REM")
               that overlaps with the window. The list is empty if no annotations overlap.
+            - A dictionary of extracted features for the window.
         Returns an empty list if an error occurs or no data is processed.
     """
     try:
@@ -106,7 +157,10 @@ def preprocess_eeg_windowed(
         if notch_freq is not None and notch_freq > 0:
             raw_window.notch_filter(freqs=notch_freq, fir_design='firwin', verbose=False)
 
-        processed_windows_data.append((raw_window.get_data(), current_window_stages))
+        # 4. Feature Extraction
+        window_data_array = raw_window.get_data()
+        extracted_features = _extract_spectral_features(window_data_array, sfreq)
+        processed_windows_data.append((window_data_array, current_window_stages, extracted_features))
         num_windows += 1
 
     logging.info(f"Finished processing. Total windows processed: {num_windows}")
@@ -131,9 +185,10 @@ if __name__ == "__main__":
     if processed_data_list:
         logging.info(f"Successfully processed {len(processed_data_list)} windows.")
         # Example: print shape and stages of the first processed window
-        # first_window_data, first_window_stages = processed_data_list[0]
+        # first_window_data, first_window_stages, first_window_features = processed_data_list[0]
         # logging.info(f"Shape of first processed window: {first_window_data.shape}")
         # logging.info(f"Sleep stage(s) for first window: {', '.join(first_window_stages) if first_window_stages else 'N/A'}")
+        # logging.info(f"Features for first window: {first_window_features}")
     else:
         logging.warning("No data was processed.")
         sys.exit(1)
