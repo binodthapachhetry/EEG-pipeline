@@ -33,8 +33,11 @@ def preprocess_eeg_windowed(
         notch_freq (float): Frequency for the notch filter (e.g., 50 or 60 Hz).
 
     Returns:
-        list[np.ndarray]: A list of NumPy arrays, where each array is a preprocessed window of EEG data.
-                          Returns an empty list if an error occurs or no data is processed.
+        list[tuple[np.ndarray, list[str]]]: A list of tuples. Each tuple contains:
+            - A NumPy array representing a preprocessed window of EEG data.
+            - A list of strings, where each string is a sleep stage annotation (e.g., "NREM2", "REM")
+              that overlaps with the window. The list is empty if no annotations overlap.
+        Returns an empty list if an error occurs or no data is processed.
     """
     try:
         logging.info(f"Loading EEG data from: {fif_file_path}")
@@ -68,11 +71,24 @@ def preprocess_eeg_windowed(
 
     for i, t_start_sec in enumerate(window_starts_sec):
         t_end_sec = t_start_sec + window_duration_sec
-        logging.info(f"Processing window {i+1}: {t_start_sec:.2f}s - {t_end_sec:.2f}s")
 
         # Create a view for the current window
         # Crop creates a copy, ensuring original raw is not modified
         raw_window = raw.copy().crop(tmin=t_start_sec, tmax=t_end_sec, include_tmax=False) # tmax is exclusive
+
+        # Determine sleep stage(s) for the current window
+        current_window_stages = []
+        if hasattr(raw, 'annotations') and raw.annotations is not None and len(raw.annotations) > 0:
+            for ann in raw.annotations:
+                ann_start = ann['onset']
+                ann_end = ann['onset'] + ann['duration']
+                # Check for overlap: annotation intersects with [t_start_sec, t_end_sec)
+                if ann_start < t_end_sec and ann_end > t_start_sec:
+                    current_window_stages.append(ann['description'])
+            current_window_stages = sorted(list(set(current_window_stages))) # Unique stages, sorted
+
+        stage_info_log = f"Stage(s): {', '.join(current_window_stages) if current_window_stages else 'N/A'}"
+        logging.info(f"Processing window {i+1}: {t_start_sec:.2f}s - {t_end_sec:.2f}s. {stage_info_log}")
 
         # 1. Re-referencing (Average Reference)
         # projection=False applies the reference directly.
@@ -90,7 +106,7 @@ def preprocess_eeg_windowed(
         if notch_freq is not None and notch_freq > 0:
             raw_window.notch_filter(freqs=notch_freq, fir_design='firwin', verbose=False)
 
-        processed_windows_data.append(raw_window.get_data())
+        processed_windows_data.append((raw_window.get_data(), current_window_stages))
         num_windows += 1
 
     logging.info(f"Finished processing. Total windows processed: {num_windows}")
@@ -114,8 +130,10 @@ if __name__ == "__main__":
 
     if processed_data_list:
         logging.info(f"Successfully processed {len(processed_data_list)} windows.")
-        # Example: print shape of the first processed window
-        # logging.info(f"Shape of first processed window: {processed_data_list[0].shape}")
+        # Example: print shape and stages of the first processed window
+        # first_window_data, first_window_stages = processed_data_list[0]
+        # logging.info(f"Shape of first processed window: {first_window_data.shape}")
+        # logging.info(f"Sleep stage(s) for first window: {', '.join(first_window_stages) if first_window_stages else 'N/A'}")
     else:
         logging.warning("No data was processed.")
         sys.exit(1)
