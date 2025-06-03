@@ -34,7 +34,13 @@ object EegStreamProcessor {
       .toDF("timestamp","channel","value")
 
     // 3. Placeholder processing – compute rolling mean as artifact suppressor
-    val processed = source.groupBy(window($"timestamp", "10 seconds"), $"channel")
+    import org.apache.spark.sql.expressions.Window
+    import org.apache.spark.sql.DataFrame
+
+    // Use Spark SQL window function for rolling mean (if needed)
+    // Here, we just use groupBy with time window for demonstration
+    val processed = source
+      .groupBy(org.apache.spark.sql.functions.window($"timestamp", "10 seconds"), $"channel")
       .agg(avg($"value").as("avg_val"))
 
     // 4. Sink to console / EBS writer
