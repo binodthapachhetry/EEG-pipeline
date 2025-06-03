@@ -1,2 +1,7 @@
 # Runtime dependencies
 mne>=1.0
+# Deep-learning / audio-processing stack
+torch>=2.2
+torchaudio>=2.2
+einops>=0.7
+braindecode>=0.7
