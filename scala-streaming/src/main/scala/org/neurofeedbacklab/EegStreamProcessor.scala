@@ -3,6 +3,7 @@ package org.neurofeedbacklab
 import edu.ucsd.sccn.LSL
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.Encoders   // required for typed Dataset encoders
 
 object EegStreamProcessor {
   def main(args: Array[String]): Unit = {
@@ -24,13 +25,14 @@ object EegStreamProcessor {
       .format("rate")             // Generates triggers; we override with custom data pull
       .option("rowsPerSecond", 1)
       .load()
-      .mapPartitions{ _ =>
-        val chunk = Array.ofDim[Float](inlet.info().channel_count())
-        Iterator.continually{
-          val ts = inlet.pull_chunk(chunk)
-          chunk.zipWithIndex.map{ case(v,i)=>(ts,i,v) }
+      .mapPartitions { _ =>
+        val chanCnt  = inlet.info().channel_count()
+        val buf      = new Array[Float](chanCnt)
+        Iterator.continually {
+          val ts = inlet.pull_sample(buf)        // returns Double timestamp
+          buf.zipWithIndex.iterator.map { case (v, idx) => (ts, idx, v) }
         }.flatten
-      }(org.apache.spark.sql.Encoders.tuple(Encoders.scalaDouble,Encoders.scalaInt,Encoders.scalaFloat))
+      }(Encoders.tuple(Encoders.scalaDouble, Encoders.scalaInt, Encoders.scalaFloat))
       .toDF("timestamp","channel","value")
 
     // 3. Placeholder processing – compute rolling mean as artifact suppressor
