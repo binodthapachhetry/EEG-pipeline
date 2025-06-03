@@ -40,7 +40,7 @@ object EegStreamProcessor {
     // Use Spark SQL window function for rolling mean (if needed)
     // Here, we just use groupBy with time window for demonstration
     val processed = source
-      .groupBy(window($"timestamp", "10 seconds"), $"channel")
+      .groupBy(window($"timestamp".cast("timestamp"), "10 seconds"), $"channel")
       .agg(avg($"value").as("avg_val"))
 
     // 4. Sink to console / EBS writer
