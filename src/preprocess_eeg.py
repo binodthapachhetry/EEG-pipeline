@@ -9,6 +9,11 @@ import logging
 import sys
 import mne
 import numpy as np
+# Optional LSL streaming
+try:
+    from lsl_stream import LSLWindowStreamer
+except ImportError:
+    LSLWindowStreamer = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -69,7 +74,8 @@ def preprocess_eeg_windowed(
     overlap_duration_sec: float = 2.0,
     l_freq: float = 0.5,
     h_freq: float = 40.0,
-    notch_freq: float = 60.0
+    notch_freq: float = 60.0,
+    stream_lsl: bool = False
 ):
     """
     Loads EEG data from a .fif file and processes it in overlapping windows.
@@ -113,6 +119,9 @@ def preprocess_eeg_windowed(
         return []
 
     processed_windows_data = []
+    lsl_streamer = None
+    if stream_lsl and LSLWindowStreamer:
+        lsl_streamer = LSLWindowStreamer(raw.ch_names, sfreq, int(window_duration_sec*sfreq))
     num_windows = 0
 
     # Calculate window start times
@@ -161,6 +170,9 @@ def preprocess_eeg_windowed(
         window_data_array = raw_window.get_data()
         extracted_features = _extract_spectral_features(window_data_array, sfreq)
         processed_windows_data.append((window_data_array, current_window_stages, extracted_features))
+        # --- Real-time push (optional) ---
+        if lsl_streamer:
+            lsl_streamer.push_window(window_data_array, extracted_features, current_window_stages)
         num_windows += 1
 
     logging.info(f"Finished processing. Total windows processed: {num_windows}")
@@ -175,11 +187,12 @@ if __name__ == "__main__":
     parser.add_argument("--l_freq", type=float, default=0.5, help="Low cutoff frequency for bandpass filter (Hz).")
     parser.add_argument("--h_freq", type=float, default=40.0, help="High cutoff frequency for bandpass filter (Hz).")
     parser.add_argument("--notch_freq", type=float, default=60.0, help="Notch filter frequency (Hz). Set to 0 to disable.")
+    parser.add_argument("--stream_lsl", action="store_true", help="If set, stream each processed window via LSL.")
     args = parser.parse_args()
 
     processed_data_list = preprocess_eeg_windowed(
         args.input_fif_file, args.window_sec, args.overlap_sec,
-        args.l_freq, args.h_freq, args.notch_freq
+        args.l_freq, args.h_freq, args.notch_freq, args.stream_lsl
     )
 
     if processed_data_list:
