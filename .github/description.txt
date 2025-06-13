@@ -1,0 +1,1 @@
+Real-time EEG pipeline: ingest & window data, deep-learning brain-state classification, and reinforcement-learning neurofeedback — Python + Scala/Spark
